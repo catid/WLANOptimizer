@@ -309,10 +309,16 @@ static WLANOptimizerThread m_WlanOptimizer;
 
 void StartWLANOptimizerThread()
 {
+#ifdef _WIN32
+    // Only run the thread on Windows because currently it has no optimizations
+    // for other platforms.
     m_WlanOptimizer.Start();
+#endif // _WIN32
 }
 
 void StopWLANOptimizerThread()
 {
+#ifdef _WIN32
     m_WlanOptimizer.Stop();
+#endif // _WIN32
 }
