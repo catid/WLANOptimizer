@@ -29,132 +29,14 @@
 
 #include "WLANOptimizer.h"
 
+#include <mutex>
+
 #ifdef _WIN32
 #undef _WIN32_WINNT
 #define _WIN32_WINNT _WIN32_WINNT_WIN7 /* must be defined for wlanapi.h */
 #include <wlanapi.h>
 #pragma comment(lib, "wlanapi")
 #pragma comment(lib, "ole32")
-#endif
-
-// This stuff is used to generate the magic SDDL
-#if 0
-
-#include <Sddl.h>
-
-void generateMagic()
-{
-    PSECURITY_DESCRIPTOR securityDescriptor = (PSECURITY_DESCRIPTOR)LocalAlloc(LMEM_FIXED, sizeof(SECURITY_DESCRIPTOR));
-    PACL pAcl = (PACL)LocalAlloc(LMEM_FIXED, sizeof(PACL));
-    SID_IDENTIFIER_AUTHORITY SIDAuthWorld = SECURITY_WORLD_SID_AUTHORITY;
-    PSID pEveryoneSID = NULL;
-    BOOL bRet, bRes = true;
-
-
-    bRet = InitializeSecurityDescriptor(securityDescriptor, SECURITY_DESCRIPTOR_REVISION);
-    if (!bRet)
-    {
-        //ST_TRACE(ST_LOG_LEVEL_WIFI_ERROR, L"Could not initialize Security Descriptor! %sn", GetLastError());
-        bRes = false;
-    }
-
-    bRet = IsValidSecurityDescriptor(securityDescriptor);
-
-    bRet = AllocateAndInitializeSid(&SIDAuthWorld, 1,
-        SECURITY_WORLD_RID,
-        0, 0, 0, 0, 0, 0, 0,
-        &pEveryoneSID);
-    if (!bRet)
-    {
-        //ST_TRACE(ST_LOG_LEVEL_WIFI_ERROR, L"Could not allocate and initialize SID! %sn", GetLastError());
-        bRes = false;
-    }
-
-    bRet = IsValidSecurityDescriptor(securityDescriptor);
-
-    bRet = SetSecurityDescriptorOwner(securityDescriptor, pEveryoneSID, TRUE);
-    if (!bRet)
-    {
-        //ST_TRACE(ST_LOG_LEVEL_WIFI_ERROR, L"Could not set Security Descriptor Owner! %sn", GetLastError());
-        bRes = false;
-    }
-
-    bRet = IsValidSecurityDescriptor(securityDescriptor);
-
-    DWORD cbAcl = sizeof(ACL) +
-        (sizeof(ACCESS_ALLOWED_ACE)) + (GetLengthSid(securityDescriptor) - sizeof(DWORD));
-    bRet = InitializeAcl(pAcl, cbAcl, ACL_REVISION);
-    if (!bRet)
-    {
-        //ST_TRACE(ST_LOG_LEVEL_WIFI_ERROR, L"Could not initialize ACL! %sn", GetLastError());
-        bRes = false;
-    }
-
-    bRet = IsValidAcl(pAcl);
-
-    const DWORD aceval = WLAN_READ_ACCESS | WLAN_EXECUTE_ACCESS | WLAN_WRITE_ACCESS;
-    bRet = AddAccessAllowedAce(pAcl, ACL_REVISION, aceval, securityDescriptor);
-    if (!bRet)
-    {
-        //ST_TRACE(ST_LOG_LEVEL_WIFI_ERROR, L"Could not add Access Allowed ACE! %sn", GetLastError());
-        bRes = false;
-    }
-
-    bRet = IsValidSecurityDescriptor(securityDescriptor);
-
-    bRet = SetSecurityDescriptorDacl(securityDescriptor, TRUE, pAcl, FALSE);
-    if (!bRet)
-    {
-        //ST_TRACE(ST_LOG_LEVEL_WIFI_ERROR, L"Could not set Security Descriptor DACL! %sn", GetLastError());
-        bRes = false;
-    }
-
-    bRet = IsValidSecurityDescriptor(securityDescriptor);
-
-    LPWSTR pStringSecurityDescriptor = nullptr;
-    ULONG len = 0;
-    bRet = ConvertSecurityDescriptorToStringSecurityDescriptorW(securityDescriptor,
-        SDDL_REVISION_1,
-        DACL_SECURITY_INFORMATION,
-        &pStringSecurityDescriptor,
-        &len
-    );
-    if (!bRet)
-    {
-        //ST_TRACE(ST_LOG_LEVEL_WIFI_ERROR, L"Could not set convert SID to String-SID! %sn", GetLastError());
-        bRes = false;
-    }
-
-    DWORD secdesc2sz = (DWORD)sizeof(SECURITY_DESCRIPTOR);
-    DWORD paclsz = cbAcl;
-    DWORD ownsz = sizeof(SID);
-    PSECURITY_DESCRIPTOR securityDescriptor2 = (PSECURITY_DESCRIPTOR)LocalAlloc(LMEM_FIXED, sizeof(SECURITY_DESCRIPTOR));
-
-    bRet = InitializeSecurityDescriptor(securityDescriptor2, SECURITY_DESCRIPTOR_REVISION);
-    if (!bRet)
-    {
-        //ST_TRACE(ST_LOG_LEVEL_WIFI_ERROR, L"Could not initialize Security Descriptor! %sn", GetLastError());
-        bRes = false;
-    }
-
-    bRet = IsValidSecurityDescriptor(securityDescriptor2);
-
-    BOOL x = MakeAbsoluteSD(
-        securityDescriptor,
-        securityDescriptor2,
-        &secdesc2sz,
-        pAcl,
-        &paclsz,
-        nullptr,
-        nullptr,
-        pEveryoneSID,
-        &ownsz,
-        nullptr,
-        nullptr);
-    DWORD err = ::GetLastError();
-    int y = 0;
-}
-
 #endif
 
 static std::mutex APILock;
@@ -185,12 +67,12 @@ static OptimizeWLAN_Result SetWlanSetting(
         !dataPtr ||
         opcodeType == wlan_opcode_value_type_invalid)
     {
-        return OptimizeWLAN_Result::ReadFailure;
+        return OptimizeWLAN_ReadFailure;
     }
 
     const bool currentValue = *(BOOL*)dataPtr != 0;
     if (currentValue == enable)
-        return OptimizeWLAN_Result::Success;
+        return OptimizeWLAN_Success;
 
     BOOL targetValue = enable ? TRUE : FALSE;
 
@@ -205,8 +87,8 @@ static OptimizeWLAN_Result SetWlanSetting(
     if (setResult != ERROR_SUCCESS)
     {
         if (setResult == ERROR_ACCESS_DENIED)
-            return OptimizeWLAN_Result::AccessDenied;
-        return OptimizeWLAN_Result::SetFailure;
+            return OptimizeWLAN_AccessDenied;
+        return OptimizeWLAN_SetFailure;
     }
 
     dataSize = 0;
@@ -226,47 +108,13 @@ static OptimizeWLAN_Result SetWlanSetting(
         *(BOOL*)dataPtr != targetValue ||
         opcodeType == wlan_opcode_value_type_invalid)
     {
-        return OptimizeWLAN_Result::ReadFailure;
+        return OptimizeWLAN_ReadFailure;
     }
 
-    return OptimizeWLAN_Result::Success;
+    return OptimizeWLAN_Success;
 }
 
-// Does not actually work unfortunately.  Poorly documented and vague error code.
-#if 0
-
-static bool AllowUsersToEditSettings()
-{
-    //generateMagic();
-
-    // Magic.
-    static const LPCWSTR kEveryoneSDDL = L"D:(A;;0x00070023;;;S-1-1-0)";
-
-    // TBD: Does this change persist between reboots?
-    const DWORD streamingSecurityResult = ::WlanSetSecuritySettings(
-        m_clientHandle,
-        wlan_secure_media_streaming_mode_enabled,
-        kEveryoneSDDL);
-    if (streamingSecurityResult != ERROR_SUCCESS)
-    {
-        return false;
-    }
-
-    const DWORD bcSecurityResult = ::WlanSetSecuritySettings(
-        m_clientHandle,
-        wlan_secure_bc_scan_enabled,
-        kEveryoneSDDL);
-    if (bcSecurityResult != ERROR_SUCCESS)
-    {
-        return false;
-    }
-
-    return true;
-}
-
-#endif
-
-OptimizeWLAN_Result OptimizeWLAN(bool enable)
+int OptimizeWLAN(int enable)
 {
     std::lock_guard<std::mutex> locker(APILock);
 
@@ -281,10 +129,12 @@ OptimizeWLAN_Result OptimizeWLAN(bool enable)
             &negotiatedVersion,
             &m_clientHandle);
         if (openResult != ERROR_SUCCESS || !m_clientHandle)
-            return OptimizeWLAN_Result::Unavailable;
+            return OptimizeWLAN_Unavailable;
     }
 
-    //AllowUsersToEditSettings();
+    OptimizeWLAN_Result result = OptimizeWLAN_Success;
+
+    bool foundConnection = false;
 
     WLAN_INTERFACE_INFO_LIST* infoListPtr = nullptr;
     const DWORD enumResult = ::WlanEnumInterfaces(
@@ -297,23 +147,28 @@ OptimizeWLAN_Result OptimizeWLAN(bool enable)
         for (int i = 0; i < count; ++i)
         {
             const WLAN_INTERFACE_INFO* info = &infoListPtr->InterfaceInfo[i];
+
+            // In my testing I found that only connected WiFi adapters are able to change this setting,
+            // as otherwise WlanSetInterface() returns ERROR_INVALID_STATE.
             if (info->isState == wlan_interface_state_connected)
             {
-                OptimizeWLAN_Result result;
+                OptimizeWLAN_Result setResult;
 
-                result = SetWlanSetting(
+                setResult = SetWlanSetting(
                     &info->InterfaceGuid,
                     wlan_intf_opcode_media_streaming_mode,
-                    enable);
-                if (result != OptimizeWLAN_Result::Success)
-                    return result;
+                    enable != 0);
+                if (setResult != OptimizeWLAN_Success)
+                    result = setResult;
 
-                result = SetWlanSetting(
+                setResult = SetWlanSetting(
                     &info->InterfaceGuid,
                     wlan_intf_opcode_background_scan_enabled,
-                    !enable);
-                if (result != OptimizeWLAN_Result::Success)
-                    return result;
+                    enable == 0);
+                if (setResult != OptimizeWLAN_Success)
+                    result = setResult;
+
+                foundConnection = true;
             }
         }
     }
@@ -326,10 +181,15 @@ OptimizeWLAN_Result OptimizeWLAN(bool enable)
     // Leak handle intentionally here - When the app closes it will be released.
     //::WlanCloseHandle(m_clientHandle, nullptr);
 
-    return OptimizeWLAN_Result::Success;
+    if (!foundConnection)
+    {
+        return OptimizeWLAN_NoConnections;
+    }
+
+    return result;
 #else //_WIN32
     // TBD: Are there also correctable issues on Mac/Linux?
-    return OptimizeWLAN_Result::Unavailable;
+    return OptimizeWLAN_Unavailable;
     (void)enable; // Unused
 #endif //_WIN32
 }

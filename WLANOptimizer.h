@@ -27,37 +27,48 @@
     POSSIBILITY OF SUCH DAMAGE.
 */
 
-#pragma once
+#ifndef WLAN_OPTIMIZER_H
+#define WLAN_OPTIMIZER_H
 
-enum class OptimizeWLAN_Result
+typedef enum OptimizeWLAN_Result_t
 {
-    Success,
+    OptimizeWLAN_Success,
 
-    Unavailable,        // Feature is not available on the operating system
-    AccessDenied,       // Must be run as Administrator
-    SecurityFailure,    // WlanSetSecuritySettings failed
-    SetFailure,         // WlanSetInterface failed
-    ReadFailure,        // Readback failed
-};
+    OptimizeWLAN_NoConnections,     // No active WiFi connections to modify
+
+    OptimizeWLAN_Unavailable,       // Feature is not available on the operating system
+    OptimizeWLAN_AccessDenied,      // Must be run as Administrator
+    OptimizeWLAN_SecurityFailure,   // WlanSetSecuritySettings failed
+    OptimizeWLAN_SetFailure,        // WlanSetInterface failed
+    OptimizeWLAN_ReadFailure,       // Readback failed
+} OptimizeWLAN_Result;
 
 /**
     OptimizeWLAN()
 
     Optimize WiFi settings for low-latency.
 
-    **************************************************
-    This function takes about 1 second to execute.
-    This setting change requires Administrator access.
-    This setting change resets when the app closes.
-    **************************************************
+    ***************************************************************
+    * This function takes about 1 second to execute.
+    * This setting change requires Administrator access.
+    * This setting change resets when the app closes.
+    * This can only change WiFi adapters with an active connection.
+    ***************************************************************
 
     This fixes a common issue on Windows laptops where the adapter scans for
     networks while a connection is active, causing 100+ millisecond delays.
     This makes a huge difference in performance for real-time multiplayer!
 
-    enable: Set to true to enable the optimizations.
-    Set to false to disable the optimizations when finished.
+    enable: Set to 1 to enable the optimizations.
+    Set to 0 to disable the optimizations when finished.
 
-    Returns true on success, false on failure.
+    Returns OptimizeWLAN_Success on success.
+    Returns other values on failure.
+
+    If it returns OptimizeWLAN_NoConnections then the application may want
+    to try again later when a connection is available.  This can also be
+    used to check when a connection becomes available.
 */
-OptimizeWLAN_Result OptimizeWLAN(bool enable);
+int OptimizeWLAN(int enable);
+
+#endif // WLAN_OPTIMIZER_H
