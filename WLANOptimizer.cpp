@@ -30,6 +30,8 @@
 #include "WLANOptimizer.h"
 
 #include <mutex>
+#include <chrono>
+using namespace std::chrono_literals;
 
 static std::mutex APILock;
 
@@ -207,4 +209,110 @@ int OptimizeWLAN(int enable)
     return OptimizeWLAN_Unavailable;
 
 #endif //_WIN32
+}
+
+
+//------------------------------------------------------------------------------
+// WLANOptimizerThread
+
+class WLANOptimizerThread
+{
+public:
+    /// Start the optimizer thread
+    void Start();
+
+    /// Stop the optimizer thread
+    void Stop();
+
+protected:
+    /// Lock preventing thread safety issues around Start() and Stop()
+    mutable std::mutex StartStopLock;
+
+    /// Lock protecting WakeCondition
+    mutable std::mutex WakeLock;
+
+    /// Condition that indicates the thread should wake up
+    std::condition_variable WakeCondition;
+
+    /// Background thread
+    std::shared_ptr<std::thread> Thread;
+
+    /// Should thread terminate?
+    std::atomic<bool> Terminated = ATOMIC_VAR_INIT(true);
+
+
+    /// Thread loop
+    void Loop();
+};
+
+void WLANOptimizerThread::Start()
+{
+    std::lock_guard<std::mutex> startStopLocker(StartStopLock);
+
+    if (!Thread)
+    {
+        Terminated = false;
+        Thread = std::make_shared<std::thread>(&WLANOptimizerThread::Loop, this);
+    }
+}
+
+void WLANOptimizerThread::Stop()
+{
+    std::lock_guard<std::mutex> startStopLocker(StartStopLock);
+
+    if (Thread)
+    {
+        Terminated = true;
+
+        // Make sure that queue notification happens after termination flag is set
+        {
+            std::unique_lock<std::mutex> wakeLocker(WakeLock);
+            WakeCondition.notify_all();
+        }
+
+        try
+        {
+            if (Thread->joinable())
+                Thread->join();
+        }
+        catch (std::system_error& /*err*/)
+        {
+        }
+    }
+    Thread = nullptr;
+}
+
+void WLANOptimizerThread::Loop()
+{
+    // Time between optimization attempts.  Retries because WiFi might reconnect.
+    static const auto kOptimizeInterval = 11s; // chrono_literals
+
+    while (!Terminated)
+    {
+        int optimizeResult = OptimizeWLAN(1);
+        if (optimizeResult != OptimizeWLAN_Success &&
+            optimizeResult != OptimizeWLAN_NoConnections)
+        {
+            break;
+        }
+
+        // unique_lock used since QueueCondition.wait requires it
+        std::unique_lock<std::mutex> locker(WakeLock);
+
+        if (!Terminated)
+            WakeCondition.wait_for(locker, kOptimizeInterval);
+    }
+}
+
+
+static WLANOptimizerThread m_WlanOptimizer;
+
+void StartWLANOptimizerThread()
+{
+    m_WlanOptimizer.Start();
+}
+
+void StopWLANOptimizerThread()
+{
+    m_WlanOptimizer.Stop();
 }

@@ -30,17 +30,32 @@
 #ifndef WLAN_OPTIMIZER_H
 #define WLAN_OPTIMIZER_H
 
+/**
+    Easy setup:
+
+    Add the include header somewhere:
+
+        #include "WLANOptimizer.h"
+
+    Call the start function:
+
+        StartWLANOptimizerThread();
+
+    And that's it.
+*/
+
+/// Result codes for OptimizeWLAN()
 typedef enum OptimizeWLAN_Result_t
 {
-    OptimizeWLAN_Success,
+    OptimizeWLAN_Success,         ///< Successfully applied changes
 
-    OptimizeWLAN_NoConnections,     // No active WiFi connections to modify
+    OptimizeWLAN_NoConnections,   ///< No active WiFi connections to modify
 
-    OptimizeWLAN_Unavailable,       // Feature is not available on the operating system
-    OptimizeWLAN_AccessDenied,      // Must be run as Administrator
-    OptimizeWLAN_SecurityFailure,   // WlanSetSecuritySettings failed
-    OptimizeWLAN_SetFailure,        // WlanSetInterface failed
-    OptimizeWLAN_ReadFailure,       // Readback failed
+    OptimizeWLAN_Unavailable,     ///< Feature is not available on the operating system
+    OptimizeWLAN_AccessDenied,    ///< Must be run as Administrator
+    OptimizeWLAN_SecurityFailure, ///< WlanSetSecuritySettings failed
+    OptimizeWLAN_SetFailure,      ///< WlanSetInterface failed
+    OptimizeWLAN_ReadFailure,     ///< Readback failed
 } OptimizeWLAN_Result;
 
 /**
@@ -50,11 +65,12 @@ typedef enum OptimizeWLAN_Result_t
 
     ***************************************************************
     * This function takes about 1 second to execute.
-    * This setting change resets when the app closes.
+    * This settings change resets when the app closes.
     * This can only change WiFi adapters with an active connection.
+    * This settings change resets if the WiFi adapter reconnects.
     ***************************************************************
 
-    Note: This setting change DOES NOT require Administrator access.
+    Note: This settings change DOES NOT require Administrator access.
 
     This fixes a common issue on Windows laptops where the adapter scans for
     networks while a connection is active, causing 100+ millisecond delays.
@@ -71,5 +87,30 @@ typedef enum OptimizeWLAN_Result_t
     used to check when a connection becomes available.
 */
 int OptimizeWLAN(int enable);
+
+
+/**
+    StartWLANOptimizerThread()
+
+    Running OptimizeWLAN() in a thread solves all the edge cases:
+
+    (1) OptimizeWLAN() takes 1 second to run, so this avoids blocking anything.
+    (2) If WiFi reconnects the settings are lost and must be reapplied.
+    (3) If WiFi connects for the first time after app start, this will catch it.
+
+    This is a background thread that runs the WLANOptimizer every 11 seconds.
+    If we see some kind of lag spike every 11 seconds this might be the culprit.
+
+    The goal is to keep refreshing the WiFi settings that disable background
+    scanning and enable media streaming mode, so that if the app starts and no
+    WiFi connection is available initially, or if WiFi goes down and connects
+    again while the app is running, the app will continue to have low latency.
+
+    It runs in a background thread because the function takes 1 second to run.
+    This is how I'm using WLANOptimizer in my own netcode.
+*/
+
+void StartWLANOptimizerThread();
+void StopWLANOptimizerThread();
 
 #endif // WLAN_OPTIMIZER_H
