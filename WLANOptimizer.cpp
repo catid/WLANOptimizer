@@ -31,15 +31,19 @@
 
 #include <mutex>
 
+static std::mutex APILock;
+
+
+//------------------------------------------------------------------------------
+// Windows Version
+
 #ifdef _WIN32
+
 #undef _WIN32_WINNT
 #define _WIN32_WINNT _WIN32_WINNT_WIN7 /* must be defined for wlanapi.h */
 #include <wlanapi.h>
 #pragma comment(lib, "wlanapi")
 #pragma comment(lib, "ole32")
-#endif
-
-static std::mutex APILock;
 
 // Client handle shared between all calls.
 // This is done because settings only persist until handle or app is closed.
@@ -114,11 +118,18 @@ static OptimizeWLAN_Result SetWlanSetting(
     return OptimizeWLAN_Success;
 }
 
+#endif // _WIN32
+
+
+//------------------------------------------------------------------------------
+// OptimizeWLAN()
+
 int OptimizeWLAN(int enable)
 {
     std::lock_guard<std::mutex> locker(APILock);
 
 #ifdef _WIN32
+
     if (!m_clientHandle)
     {
         const DWORD clientVersion = 2;
@@ -187,9 +198,13 @@ int OptimizeWLAN(int enable)
     }
 
     return result;
+
 #else //_WIN32
+
+    (void)enable; // Unused
+
     // TBD: Are there also correctable issues on Mac/Linux?
     return OptimizeWLAN_Unavailable;
-    (void)enable; // Unused
+
 #endif //_WIN32
 }
