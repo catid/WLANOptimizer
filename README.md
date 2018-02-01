@@ -1,5 +1,5 @@
 # WLANOptimizer
-Single-header C++ library that fixes WiFi performance issues for online gaming and other low-latency real-time network traffic.
+Single-header C library that fixes WiFi performance issues for online gaming and other low-latency real-time network traffic.
 
 Presents the OptimizeWLAN() function to optimize WiFi settings for low-latency.
 
