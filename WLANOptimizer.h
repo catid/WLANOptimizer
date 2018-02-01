@@ -50,10 +50,11 @@ typedef enum OptimizeWLAN_Result_t
 
     ***************************************************************
     * This function takes about 1 second to execute.
-    * This setting change requires Administrator access.
     * This setting change resets when the app closes.
     * This can only change WiFi adapters with an active connection.
     ***************************************************************
+
+    Note: This setting change DOES NOT require Administrator access.
 
     This fixes a common issue on Windows laptops where the adapter scans for
     networks while a connection is active, causing 100+ millisecond delays.
