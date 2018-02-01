@@ -21,3 +21,10 @@ Example code:
         return false;
     return true;
 ```
+
+
+#### Credits
+
+Software by Christopher A. Taylor mrcatid@gmail.com
+
+Please reach out if you need support or would like to collaborate on a project.
