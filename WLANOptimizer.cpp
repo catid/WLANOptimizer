@@ -29,6 +29,7 @@
 
 #include "WLANOptimizer.h"
 
+#include <atomic>
 #include <mutex>
 #include <chrono>
 using namespace std::chrono_literals;
