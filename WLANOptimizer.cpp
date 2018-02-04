@@ -45,6 +45,7 @@ static std::mutex APILock;
 #undef _WIN32_WINNT
 #define _WIN32_WINNT _WIN32_WINNT_WIN7 /* must be defined for wlanapi.h */
 #include <wlanapi.h>
+#include <objbase.h>
 #pragma comment(lib, "wlanapi")
 #pragma comment(lib, "ole32")
 
