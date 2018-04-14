@@ -37,5 +37,10 @@ add_library(WLANOptimizer STATIC ${LIB_SOURCE_FILES})
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 
-add_executable(stand_alone.exe WIN32 ${STAND_ALONE_SOURCE_FILES})
+if(MSVC)
+  add_executable(stand_alone.exe ${STAND_ALONE_SOURCE_FILES})
+else()
+  add_executable(stand_alone.exe WIN32 ${STAND_ALONE_SOURCE_FILES})
+endif()
+
 target_link_libraries(stand_alone.exe WLANOptimizer Threads::Threads wlanapi)
