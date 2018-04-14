@@ -1,9 +1,15 @@
 cmake_minimum_required(VERSION 3.5)
 project(WLANOptimizer)
 
+if(UNIX)
+    SET(CMAKE_SYSTEM_NAME Windows)
+    SET(CMAKE_CXX_COMPILER x86_64-w64-mingw32-g++-posix)
+    SET(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static-libgcc -static-libstdc++ -Wl,-Bstatic,--whole-archive -lwinpthread -Wl,--no-whole-archive")
+endif()
+
 set(CMAKE_CONFIGURATION_TYPES "Debug;Release" CACHE STRING "" FORCE)
 
-set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD 14)
 
 set(LIB_SOURCE_FILES
         WLANOptimizer.cpp
@@ -31,5 +37,5 @@ add_library(WLANOptimizer STATIC ${LIB_SOURCE_FILES})
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 
-add_executable(stand_alone ${STAND_ALONE_SOURCE_FILES})
-target_link_libraries(stand_alone WLANOptimizer Threads::Threads)
+add_executable(stand_alone.exe WIN32 ${STAND_ALONE_SOURCE_FILES})
+target_link_libraries(stand_alone.exe WLANOptimizer Threads::Threads wlanapi)
