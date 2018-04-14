@@ -55,14 +55,14 @@ int main()
         if (optimizeResult == OptimizeWLAN_Success) {
             cout << "*** Wireless LAN detected and settings updated to reduce latency." << endl;
         }
-        if (optimizeResult == OptimizeWLAN_NoConnections) {
+        else if (optimizeResult == OptimizeWLAN_NoConnections) {
             cout << "*** No Wireless LAN connections detected to optimize." << endl;
         }
 
         std::this_thread::sleep_for(kOptimizeInterval);
     }
 
-    cout << "WLANOptimizer has due to an error.  Close this application at any time." << endl;
+    cout << "WLANOptimizer has stopped due to an error.  Close this application at any time." << endl;
 
     for (;;) {
         std::this_thread::sleep_for(1s);
