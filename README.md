@@ -7,6 +7,8 @@ This makes a huge difference in performance for real-time multiplayer!
 
 On my laptop it reduces the latency from 130 ms delay spikes to 10 ms or less - 10x improvement.
 
+Notably this also improves my BitTorrent download speed by 4x, as BitTorrent protocol uses a congestion control strategy based on latency (LEDBAT).  These latency spikes cause download speed to plummet in easy, repeatable tests.
+
 Note: This settings change DOES NOT require Administrator access.
 
 Easy setup:
