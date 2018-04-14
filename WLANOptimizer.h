@@ -70,7 +70,10 @@ typedef enum OptimizeWLAN_Result_t
     * This settings change resets if the WiFi adapter reconnects.
     ***************************************************************
 
-    Note: This settings change DOES NOT require Administrator access.
+    Note: This settings change DOES NOT require that the application has
+    Administrator access (e.g. no need to elevate with UAC), but it does
+    require that the logged-in user has an attached Administrator token
+    (e.g. they could elevate with UAC if they wanted to).
 
     This fixes a common issue on Windows laptops where the adapter scans for
     networks while a connection is active, causing 100+ millisecond delays.

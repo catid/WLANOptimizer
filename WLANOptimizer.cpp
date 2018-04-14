@@ -31,6 +31,10 @@
 
 #include <atomic>
 #include <mutex>
+#include <thread>
+#include <condition_variable>
+#include <memory>
+
 #include <chrono>
 using namespace std::chrono_literals;
 
@@ -47,7 +51,7 @@ static std::mutex APILock;
 #include <windows.h>
 #include <wlanapi.h>
 #pragma comment(lib, "wlanapi")
-#pragma comment(lib, "ole32")
+//#pragma comment(lib, "ole32")
 
 // Client handle shared between all calls.
 // This is done because settings only persist until handle or app is closed.
@@ -70,6 +74,8 @@ static OptimizeWLAN_Result SetWlanSetting(
         &dataSize,
         &dataPtr,
         &opcodeType);
+
+    // If the query call failed:
     if (queryResult != ERROR_SUCCESS ||
         dataSize < 1 ||
         !dataPtr ||
@@ -78,9 +84,12 @@ static OptimizeWLAN_Result SetWlanSetting(
         return OptimizeWLAN_ReadFailure;
     }
 
+    // If the current value of the setting is already the one we wanted:
     const bool currentValue = *(BOOL*)dataPtr != 0;
-    if (currentValue == enable)
+    if (currentValue == enable) {
+        // Avoid extra work (common case in steady state)
         return OptimizeWLAN_Success;
+    }
 
     BOOL targetValue = enable ? TRUE : FALSE;
 
@@ -92,10 +101,15 @@ static OptimizeWLAN_Result SetWlanSetting(
         (DWORD)sizeof(targetValue),
         &targetValue,
         nullptr);
+
+    // If set call failed:
     if (setResult != ERROR_SUCCESS)
     {
-        if (setResult == ERROR_ACCESS_DENIED)
+        // If the error was related to permissions, bubble that up:
+        if (setResult == ERROR_ACCESS_DENIED) {
             return OptimizeWLAN_AccessDenied;
+        }
+
         return OptimizeWLAN_SetFailure;
     }
 
@@ -110,6 +124,8 @@ static OptimizeWLAN_Result SetWlanSetting(
         &dataSize,
         &dataPtr,
         &opcodeType);
+
+    // If the readback call failed:
     if (queryResult != ERROR_SUCCESS ||
         dataSize < 1 ||
         !dataPtr ||
@@ -134,6 +150,7 @@ int OptimizeWLAN(int enable)
 
 #ifdef _WIN32
 
+    // If the handle has not been opened yet:
     if (!m_clientHandle)
     {
         const DWORD clientVersion = 2;
@@ -143,8 +160,13 @@ int OptimizeWLAN(int enable)
             nullptr,
             &negotiatedVersion,
             &m_clientHandle);
-        if (openResult != ERROR_SUCCESS || !m_clientHandle)
+
+        // If the handle could not be opened:
+        if (openResult != ERROR_SUCCESS ||
+            !m_clientHandle)
+        {
             return OptimizeWLAN_Unavailable;
+        }
     }
 
     OptimizeWLAN_Result result = OptimizeWLAN_Success;
@@ -156,9 +178,14 @@ int OptimizeWLAN(int enable)
         m_clientHandle,
         nullptr,
         &infoListPtr);
-    if (enumResult == ERROR_SUCCESS && infoListPtr)
+
+    // If the enumeration call succeeded:
+    if (enumResult == ERROR_SUCCESS &&
+        infoListPtr != nullptr)
     {
         const int count = (int)infoListPtr->dwNumberOfItems;
+
+        // For each item:
         for (int i = 0; i < count; ++i)
         {
             const WLAN_INTERFACE_INFO* info = &infoListPtr->InterfaceInfo[i];
@@ -173,31 +200,39 @@ int OptimizeWLAN(int enable)
                     &info->InterfaceGuid,
                     wlan_intf_opcode_media_streaming_mode,
                     enable != 0);
-                if (setResult != OptimizeWLAN_Success)
+
+                // If a failure occurred:
+                if (setResult != OptimizeWLAN_Success) {
+                    // Return this failure
                     result = setResult;
+                }
 
                 setResult = SetWlanSetting(
                     &info->InterfaceGuid,
                     wlan_intf_opcode_background_scan_enabled,
                     enable == 0);
-                if (setResult != OptimizeWLAN_Success)
+
+                // If a failure occurred:
+                if (setResult != OptimizeWLAN_Success) {
+                    // Return this failure
                     result = setResult;
+                }
 
                 foundConnection = true;
             }
         }
     }
 
-    if (infoListPtr != nullptr)
-    {
+    // Free memory for the enumerated info list
+    if (infoListPtr != nullptr) {
         ::WlanFreeMemory(infoListPtr);
     }
 
     // Leak handle intentionally here - When the app closes it will be released.
     //::WlanCloseHandle(m_clientHandle, nullptr);
 
-    if (!foundConnection)
-    {
+    // If no connections were found:
+    if (!foundConnection) {
         return OptimizeWLAN_NoConnections;
     }
 
@@ -272,16 +307,19 @@ void WLANOptimizerThread::Stop()
             WakeCondition.notify_all();
         }
 
+        // Wait for thread to stop
         try
         {
-            if (Thread->joinable())
+            if (Thread->joinable()) {
                 Thread->join();
+            }
         }
         catch (std::system_error& /*err*/)
         {
         }
+
+        Thread = nullptr;
     }
-    Thread = nullptr;
 }
 
 void WLANOptimizerThread::Loop()
@@ -292,17 +330,22 @@ void WLANOptimizerThread::Loop()
     while (!Terminated)
     {
         int optimizeResult = OptimizeWLAN(1);
+
+        // If result was a failure code,
+        // and the code was not that no connections were available:
         if (optimizeResult != OptimizeWLAN_Success &&
             optimizeResult != OptimizeWLAN_NoConnections)
         {
+            // Stop trying to optimize WLAN if we hit an unexpected failure
             break;
         }
 
         // unique_lock used since QueueCondition.wait requires it
         std::unique_lock<std::mutex> locker(WakeLock);
 
-        if (!Terminated)
+        if (!Terminated) {
             WakeCondition.wait_for(locker, kOptimizeInterval);
+        }
     }
 }
 
