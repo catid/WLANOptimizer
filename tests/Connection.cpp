@@ -269,7 +269,7 @@ void TestConnection::WriteRecovery()
 
 void TestConnection::OnRecoveredData(const CCatOriginal& original)
 {
-    if (original.Bytes == 2)
+    if (original.Bytes >= 3)
     {
         uint16_t data_id = ReadU16_LE(original.Data);
         OnData(data_id, original.Data[2] != 0);
