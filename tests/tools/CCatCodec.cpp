@@ -308,6 +308,8 @@ CCatResult Encoder::EncodeRecovery(CCatRecovery& recoveryOut)
         return CCat_NeedsMoreData;
     }
 
+    PKTALLOC_DEBUG_ASSERT(count <= CCAT_MAX_WINDOW_PACKETS);
+
     // Step (2): Write recovery packet
 
     PKTALLOC_DEBUG_ASSERT(NextSequence >= count);
@@ -363,7 +365,7 @@ CCatResult Encoder::EncodeRecovery(CCatRecovery& recoveryOut)
 #endif // CCAT_MORE_PARITY_ROWS
 
     recoveryOut.Data = output;
-    recoveryOut.Count = count;
+    recoveryOut.Count = static_cast<uint8_t>(count);
     recoveryOut.SequenceStart = sequenceStart.ToUnsigned();
     recoveryOut.Bytes = maxBytes;
     recoveryOut.RecoveryRow = row;

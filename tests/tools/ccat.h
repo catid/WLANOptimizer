@@ -82,7 +82,7 @@
 */
 
 /// Library version
-#define CCAT_VERSION 2
+#define CCAT_VERSION 3
 
 // Tweak if the functions are exported or statically linked
 //#define CCAT_DLL /* Defined when building/linking as DLL */

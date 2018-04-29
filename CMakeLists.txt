@@ -87,7 +87,7 @@ target_link_libraries(test_peer2peer_no_gui
 )
 
 
-# Peer2Peer test app with GUI provided by OpenGL via GLEW/GLFW:
+# Peer2Peer test app with a weird IMGUI/DirectX11 UI
 if(MSVC)
 
 set(GUI_SOURCE_FILES

@@ -62,15 +62,15 @@ static const uint32_t kDiscoverMagic = 0x69adde69;
 static const uint8_t kOpcodeDiscovery = 0 | kOpcodeFlag_PreConnect;
 static const uint8_t kOpcodeDiscoveryReply = 1 | kOpcodeFlag_PreConnect;
 
-// <opcode(1)> <packet sequence number(2)> <send timestamp(3)> <best min ts(3)>
-static const unsigned kOverheadBytes = 1 + 2 + 3 + 3;
+// <opcode(1)> <packet nonce(2)> <send timestamp(3)> <best min ts(3)> <original sequence number(2)>
+static const unsigned kOverheadBytes = 1 + 2 + 3 + 3 + 2;
 
-// <original sequence number(2)> <data id(2)> <WLANOptimizerEnabled(1)>
-static const unsigned kOriginalBytes = 2 + 2 + 1;
+// <data id(2)> <WLANOptimizerEnabled(1)>
+static const unsigned kOriginalBytes = 2 + 1;
 static const uint8_t kOpcodeOriginal = 0;
 
-// <recovery row(1)> <count(1)> <original sequence start(2)> <recovery data(x)>
-static const unsigned kRecoveryOverheadBytes = 1 + 1 + 2;
+// <recovery row(1)> <count(1)> <recovery data(x)>
+static const unsigned kRecoveryOverheadBytes = 1 + 1;
 static const uint8_t kOpcodeRecovery = 1;
 
 
@@ -80,8 +80,9 @@ static const uint8_t kOpcodeRecovery = 1;
 struct Statistics
 {
     std::string Name;
-    float Min = 0;
-    float Max = 0;
+    float Min = 0.f;
+    float Max = 0.f;
+    float Variance = 0.f;
     float Percentiles[1 + 9 + 1]; // Min, 10% - 90%, Max
     bool WLANOptimizerEnabled = false;
 };
@@ -123,6 +124,10 @@ protected:
 
     std::vector<unsigned> OWDSamples;
     unsigned MinOWD = 0, MaxOWD = 0;
+
+    // Variance using Welford method:
+    // http://jonisalonen.com/2013/deriving-welfords-method-for-computing-variance/
+    float WelfordS = 0.f, WelfordM = 0.f;
 
     unsigned GetPercentileOWD(float percentile);
 };
@@ -198,10 +203,9 @@ protected:
 
     uint64_t LastReceiveUsec = 0;
 
-    uint64_t NextOutgoingSequence = 0;
-    uint64_t LargestIncomingSequence = 0;
+    uint64_t NextNonce = 0;
+    uint64_t NextOriginalSequence = 0;
 
-    uint64_t OriginalSequence = 0;
     uint64_t LargestIncomingOriginal = 0;
 
     uint16_t NextDataPiece = 0;

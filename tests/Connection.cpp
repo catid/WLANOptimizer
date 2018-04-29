@@ -81,6 +81,8 @@ void Switcher::Enable(bool enabled)
     const uint64_t nowUsec = GetTimeUsec();
     LastSwitchUsec = nowUsec;
 
+    Logger.Info("Switching WLANOptimizer: ", enabled);
+
     AsyncWorker = MakeUniqueNoThrow<std::thread>([enabled] {
         const int optimizeResult = OptimizeWLAN(enabled ? 1 : 0);
 
@@ -120,9 +122,11 @@ unsigned StatisticsCalculator::GetPercentileOWD(float percentile)
 
 void StatisticsCalculator::AddOWDSample(unsigned owdUsec)
 {
-    if (OWDSamples.empty())
-    {
+    if (OWDSamples.empty()) {
         MinOWD = MaxOWD = owdUsec;
+
+        WelfordM = 0.f;
+        WelfordS = 0.f;
     }
     else
     {
@@ -136,6 +140,13 @@ void StatisticsCalculator::AddOWDSample(unsigned owdUsec)
 
     OWDSamples.push_back(owdUsec);
 
+    // Welford method for variance calculation
+    const unsigned x = owdUsec;
+    const unsigned k = OWDSamples.size();
+    const float m = WelfordM + (float)(x - WelfordM) / k;
+    WelfordS += (x - m) * (x - WelfordM);
+    WelfordM = m;
+
     if (OWDSamples.size() > 100)
     {
         std::lock_guard<std::mutex> locker(Lock);
@@ -144,11 +155,11 @@ void StatisticsCalculator::AddOWDSample(unsigned owdUsec)
 
         Last.Max = MaxOWD / 1000.f;
         Last.Min = MinOWD / 1000.f;
+        Last.Variance = WelfordS / (OWDSamples.size() - 1);
 
         Last.Percentiles[0] = MinOWD / 1000.f;
         Last.Percentiles[10] = MaxOWD / 1000.f;
-        for (int i = 1; i < 10; ++i)
-        {
+        for (int i = 1; i < 10; ++i) {
             Last.Percentiles[i] = GetPercentileOWD(i / 10.f) / 1000.f;
         }
 
@@ -186,19 +197,18 @@ void TestConnection::OnTick(uint64_t nowUsec)
 {
     WriteNextData();
 
-    if (OriginalSequence % 4 == 0) {
+    // 25% FEC overhead
+    if (NextOriginalSequence % 4 == 0) {
         WriteRecovery();
     }
 
     std::string name = PeerAddress.address().to_string() + ":" + std::to_string(PeerAddress.port());
     std::string title = name;
     title += " (WLANOptimizer ";
-    if (WoptEnabled)
-    {
+    if (WoptEnabled) {
         title += "ENABLED)";
     }
-    else
-    {
+    else {
         title += "DISABLED)";
     }
     StatsCalc.SetName(title);
@@ -215,24 +225,22 @@ void TestConnection::WriteNextData()
 
     // Write header
     data[0] = kOpcodeOriginal;
-    WriteU16_LE(data + 1, (uint16_t)NextOutgoingSequence);
-    WriteU24_LE(data + 3, TimeSync.LocalTimeToDatagramTS24(GetTimeUsec()));
+    WriteU16_LE(data + 1, (uint16_t)NextNonce);
+    WriteU24_LE(data + 3, TimeSynchronizer::LocalTimeToDatagramTS24(GetTimeUsec()));
     WriteU24_LE(data + 6, TimeSync.GetMinDeltaTS24().ToUnsigned());
-    ++NextOutgoingSequence;
-
-    // Write FEC header
-    WriteU16_LE(data + 9, (uint16_t)OriginalSequence);
+    WriteU16_LE(data + 9, (uint16_t)NextOriginalSequence);
+    ++NextNonce;
 
     // Write data
-    WriteU16_LE(data + 11, NextDataPiece);
-    data[13] = WoptEnabled ? 1 : 0;
+    WriteU16_LE(data + kOverheadBytes, NextDataPiece);
+    data[kOverheadBytes + 2] = WoptEnabled ? 1 : 0;
     ++NextDataPiece;
 
     CCatOriginal original;
-    original.Bytes = 2;
-    original.Data = data + 11;
-    original.SequenceNumber = OriginalSequence;
-    ++OriginalSequence;
+    original.Bytes = kOriginalBytes;
+    original.Data = data + kOverheadBytes;
+    original.SequenceNumber = NextOriginalSequence;
+    ++NextOriginalSequence;
 
     SocketPtr->Send(PeerAddress, data, kOverheadBytes + kOriginalBytes);
 
@@ -251,28 +259,30 @@ void TestConnection::WriteRecovery()
 
     // Write header
     data[0] = kOpcodeRecovery;
-    WriteU16_LE(data + 1, (uint16_t)NextOutgoingSequence);
-    WriteU24_LE(data + 3, TimeSync.LocalTimeToDatagramTS24(GetTimeUsec()));
+    WriteU16_LE(data + 1, (uint16_t)NextNonce);
+    WriteU24_LE(data + 3, TimeSynchronizer::LocalTimeToDatagramTS24(GetTimeUsec()));
     WriteU24_LE(data + 6, TimeSync.GetMinDeltaTS24().ToUnsigned());
-    ++NextOutgoingSequence;
+    WriteU16_LE(data + 9, (uint16_t)recovery.SequenceStart);
+    ++NextNonce;
 
     // Write recovery header
-    data[9] = recovery.RecoveryRow;
-    data[10] = recovery.Count;
-    WriteU16_LE(data + 11, (uint16_t)recovery.SequenceStart);
+    data[kOverheadBytes] = recovery.RecoveryRow;
+    data[kOverheadBytes + 1] = recovery.Count;
 
     // Write recovery piece
-    memcpy(data + 13, recovery.Data, recovery.Bytes);
+    memcpy(data + kOverheadBytes + kRecoveryOverheadBytes, recovery.Data, recovery.Bytes);
 
-    SocketPtr->Send(PeerAddress, data, kOverheadBytes + kRecoveryOverheadBytes + recovery.Bytes);
+    SocketPtr->Send(
+        PeerAddress,
+        data,
+        kOverheadBytes + kRecoveryOverheadBytes + recovery.Bytes);
 }
 
 void TestConnection::OnRecoveredData(const CCatOriginal& original)
 {
     if (original.Bytes >= 3)
     {
-        uint16_t data_id = ReadU16_LE(original.Data);
-        OnData(data_id, original.Data[2] != 0);
+        OnData(ReadU16_LE(original.Data), original.Data[2] != 0);
     }
 }
 
@@ -284,8 +294,7 @@ void TestConnection::OnData(uint16_t id, bool enabled)
     // of the WLANOptimizer enable switch.  We want both sides to turn it on/off
     // around the same time so that the effects can be seen when both sides turn
     // on the WLANOptimizer.
-    if (SwitcherPtr->MyGuid < PeerGuid)
-    {
+    if (SwitcherPtr->MyGuid < PeerGuid) {
         SwitcherPtr->Enable(enabled);
     }
 }
@@ -300,77 +309,95 @@ void TestConnection::OnRead(uint64_t receiveUsec, uint8_t* data, unsigned bytes)
         return;
     }
 
-    if (0 != (data[0] & kOpcodeFlag_PreConnect)) {
+    const uint8_t opcode = data[0];
+
+    if (0 != (opcode & kOpcodeFlag_PreConnect)) {
         //Logger.Warning("Ignoring discovery/bogon");
         return;
     }
 
-    Counter64 sequence = Strikes.Expand(ReadU16_LE(data + 1), 2);
+    // Read the nonce: This is used by protocols to initialize encryption
+    // differently for each packet, to reject duplicates,
+    // and to estimate packet loss.
+    Counter64 nonce = Strikes.Expand(ReadU16_LE(data + 1), 2);
 
-    if (Strikes.IsDuplicate(sequence)) {
-        Logger.Warning("Strikes.IsDuplicate ", sequence.ToUnsigned());
+    if (Strikes.IsDuplicate(nonce)) {
+        Logger.Warning("Strikes.IsDuplicate ", nonce.ToUnsigned());
         return;
     }
 
     //Logger.Warning("ACCEPT ", sequence.ToUnsigned());
 
     LastReceiveUsec = receiveUsec;
-    Strikes.Accept(sequence);
+    Strikes.Accept(nonce);
 
-    Counter24 datagramTimestamp = ReadU24_LE(data + 3);
-    Counter24 peerMinDeltaTS24 = ReadU24_LE(data + 6);
+    // Read timestamp for when this packet was sent (in remote time domain).
+    // This is used to improve timesync accuracy and collect OWD statistics.
+    // A real protocol might use this for congestion control.
+    const Counter24 datagramTimestamp = ReadU24_LE(data + 3);
 
+    // Read peer's MinDeltaTS24 used for time synch (see TimeSync header).
+    // In a real protocol this is sent less frequently.
+    const Counter24 peerMinDeltaTS24 = ReadU24_LE(data + 6);
+
+    // Submit data to TimeSync and get packet one-way-delay (OWD)
     TimeSync.OnPeerMinDeltaTS24(peerMinDeltaTS24);
-
-    unsigned owdUsec = TimeSync.OnAuthenticatedDatagramTimestamp(datagramTimestamp, receiveUsec);
-
+    const unsigned owdUsec = TimeSync.OnAuthenticatedDatagramTimestamp(
+        datagramTimestamp,
+        receiveUsec);
     if (owdUsec > 0) {
         StatsCalc.AddOWDSample(owdUsec);
     }
 
-    const uint8_t opcode = data[0];
+    // Reconstruct data sequence number for packet.
+    // The sequence number is different from the nonce, because some packets
+    // do not contain data (they only contain FEC recovery data).  In a real
+    // protocol, unreliable packets not protected by FEC do not need sequence
+    // numbers.
+    const Counter64 recoveredSequenceStart = CounterExpand(
+        LargestIncomingOriginal,
+        ReadU16_LE(data + kOverheadBytes), 2);
+    if (recoveredSequenceStart > LargestIncomingOriginal) {
+        // Keep track of the largest one seen so far to aid with this reconstruction
+        LargestIncomingOriginal = recoveredSequenceStart.ToUnsigned();
+    }
 
+    // If this is original data:
     if (opcode == kOpcodeOriginal &&
         bytes == kOverheadBytes + kOriginalBytes)
     {
-        Counter64 recoveredSequenceStart = CounterExpand(
-            LargestIncomingOriginal,
-            ReadU16_LE(data + kOverheadBytes), 2);
-
-        if (recoveredSequenceStart > LargestIncomingOriginal) {
-            LargestIncomingOriginal = recoveredSequenceStart.ToUnsigned();
-        }
-
-        uint8_t* payloadData = data + kOverheadBytes + 2;
-        unsigned payloadBytes = bytes - (kOverheadBytes + 2);
-
         CCatOriginal original;
-        original.Bytes = payloadBytes;
-        original.Data = payloadData;
+        original.Data = data + kOverheadBytes;
+        original.Bytes = bytes - kOverheadBytes;
         original.SequenceNumber = recoveredSequenceStart.ToUnsigned();
 
-        OnData(ReadU16_LE(payloadData), payloadData[2] != 0);
+        OnData(ReadU16_LE(original.Data), original.Data[2] != 0);
 
+#if 1
+        // Simulate 10% packetloss
+        if (rand() % 10 == 0) {
+            return;
+        }
+#endif
+
+        // Note: We may get multiple OnRecoveredData() callbacks here
         CauchyCaterpillar::OnOriginal(original);
+        return;
     }
-    else if (opcode == kOpcodeRecovery &&
+
+    // If this is FEC recovery data:
+    if (opcode == kOpcodeRecovery &&
         bytes > kOverheadBytes + kRecoveryOverheadBytes)
     {
-        Counter64 recoveredSequenceStart = CounterExpand(
-            LargestIncomingOriginal,
-            ReadU16_LE(data + kOverheadBytes + 2), 2);
-
-        if (recoveredSequenceStart > LargestIncomingOriginal) {
-            LargestIncomingOriginal = recoveredSequenceStart.ToUnsigned();
-        }
-
         CCatRecovery recovery;
         recovery.Data = data + kOverheadBytes + kRecoveryOverheadBytes;
         recovery.Bytes = bytes - (kOverheadBytes + kRecoveryOverheadBytes);
         recovery.RecoveryRow = data[kOverheadBytes];
         recovery.Count = data[kOverheadBytes + 1];
+        // Sharing the sequence start field with the sequence number field
         recovery.SequenceStart = recoveredSequenceStart.ToUnsigned();
 
+        // Note: We may get multiple OnRecoveredData() callbacks here
         CauchyCaterpillar::OnRecovery(recovery);
     }
 }

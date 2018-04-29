@@ -25,7 +25,7 @@ class GUIStatsReceiver : public wopt::IStatisticsReceiver
 public:
     void OnStats(const wopt::Statistics& stats) override
     {
-        Logger.Info("One-Way Delay Stats (msec): Min=", stats.Min, " Max=", stats.Max);
+        Logger.Info("One-Way Delay Stats (msec): Min=", stats.Min, " Max=", stats.Max, " Variance=", stats.Variance);
 
         Logger.Info("One-Way Delay Percentiles: 10%=", stats.Percentiles[1],
             " 20%=", stats.Percentiles[2],
@@ -51,6 +51,7 @@ void DrawStats()
         ImGui::Text("One-Way Delay Statistics for %s", title.c_str());
         ImGui::BulletText("Minimum OWD (msec) = %f", stats.Min);
         ImGui::BulletText("Maximum OWD (msec) = %f", stats.Max);
+        ImGui::BulletText("Variance (msec) = %f", stats.Variance);
         ImGui::PlotHistogram(
             "10%-90% percentile latencies",
             stats.Percentiles,
