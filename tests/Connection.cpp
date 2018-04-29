@@ -31,6 +31,8 @@
 
 #include <algorithm>
 
+#define CONNECTION_ENABLE_FAKE_PACKET_LOSS
+
 namespace wopt {
 
 static logger::Channel Logger("Connection", wopt::kMinLogLevel);
@@ -81,7 +83,7 @@ void Switcher::Enable(bool enabled)
     const uint64_t nowUsec = GetTimeUsec();
     LastSwitchUsec = nowUsec;
 
-    Logger.Info("Switching WLANOptimizer: ", enabled);
+    Logger.Info("Switching WLANOptimizer enabled = ", enabled, "...");
 
     AsyncWorker = MakeUniqueNoThrow<std::thread>([enabled] {
         const int optimizeResult = OptimizeWLAN(enabled ? 1 : 0);
@@ -124,8 +126,10 @@ void StatisticsCalculator::AddOWDSample(unsigned owdUsec)
 {
     if (OWDSamples.empty()) {
         MinOWD = MaxOWD = owdUsec;
+        AvgSum = owdUsec;
 
-        WelfordM = 0.f;
+        // Unrolled k = 1 first loop for Welford method
+        WelfordM = owdUsec / 1000.f;
         WelfordS = 0.f;
     }
     else
@@ -136,16 +140,17 @@ void StatisticsCalculator::AddOWDSample(unsigned owdUsec)
         if (MaxOWD < owdUsec) {
             MaxOWD = owdUsec;
         }
+        AvgSum += owdUsec;
+
+        // Welford method for variance calculation
+        const unsigned x = owdUsec / 1000.f;
+        const unsigned k = OWDSamples.size() + 1;
+        const float m = WelfordM + (float)(x - WelfordM) / k;
+        WelfordS += (x - m) * (x - WelfordM);
+        WelfordM = m;
     }
 
     OWDSamples.push_back(owdUsec);
-
-    // Welford method for variance calculation
-    const unsigned x = owdUsec;
-    const unsigned k = OWDSamples.size();
-    const float m = WelfordM + (float)(x - WelfordM) / k;
-    WelfordS += (x - m) * (x - WelfordM);
-    WelfordM = m;
 
     if (OWDSamples.size() > 100)
     {
@@ -155,7 +160,8 @@ void StatisticsCalculator::AddOWDSample(unsigned owdUsec)
 
         Last.Max = MaxOWD / 1000.f;
         Last.Min = MinOWD / 1000.f;
-        Last.Variance = WelfordS / (OWDSamples.size() - 1);
+        Last.Average = AvgSum / (OWDSamples.size() * 1000.f);
+        Last.StandardDeviation = sqrtf(WelfordS / (OWDSamples.size() - 1));
 
         Last.Percentiles[0] = MinOWD / 1000.f;
         Last.Percentiles[10] = MaxOWD / 1000.f;
@@ -251,11 +257,18 @@ void TestConnection::WriteRecovery()
 {
     CCatRecovery recovery;
 
-    if (!SendRecovery(recovery) || recovery.Bytes > 128) {
+    static const int kMaxRecoveryBytes = 128;
+
+    if (!SendRecovery(recovery)) {
         return;
     }
 
-    uint8_t data[kOverheadBytes + kRecoveryOverheadBytes + 128];
+    if (recovery.Bytes > kMaxRecoveryBytes) {
+        WOPT_DEBUG_BREAK();
+        return;
+    }
+
+    uint8_t data[kOverheadBytes + kRecoveryOverheadBytes + kMaxRecoveryBytes];
 
     // Write header
     data[0] = kOpcodeRecovery;
@@ -280,8 +293,7 @@ void TestConnection::WriteRecovery()
 
 void TestConnection::OnRecoveredData(const CCatOriginal& original)
 {
-    if (original.Bytes >= 3)
-    {
+    if (original.Bytes >= 3) {
         OnData(ReadU16_LE(original.Data), original.Data[2] != 0);
     }
 }
@@ -356,7 +368,7 @@ void TestConnection::OnRead(uint64_t receiveUsec, uint8_t* data, unsigned bytes)
     // numbers.
     const Counter64 recoveredSequenceStart = CounterExpand(
         LargestIncomingOriginal,
-        ReadU16_LE(data + kOverheadBytes), 2);
+        ReadU16_LE(data + 9), 2);
     if (recoveredSequenceStart > LargestIncomingOriginal) {
         // Keep track of the largest one seen so far to aid with this reconstruction
         LargestIncomingOriginal = recoveredSequenceStart.ToUnsigned();
@@ -373,7 +385,7 @@ void TestConnection::OnRead(uint64_t receiveUsec, uint8_t* data, unsigned bytes)
 
         OnData(ReadU16_LE(original.Data), original.Data[2] != 0);
 
-#if 1
+#ifdef CONNECTION_ENABLE_FAKE_PACKET_LOSS
         // Simulate 10% packetloss
         if (rand() % 10 == 0) {
             return;
@@ -397,6 +409,8 @@ void TestConnection::OnRead(uint64_t receiveUsec, uint8_t* data, unsigned bytes)
         // Sharing the sequence start field with the sequence number field
         recovery.SequenceStart = recoveredSequenceStart.ToUnsigned();
 
+        //Logger.Info("recovery.RecoveryRow = ", (int)recovery.RecoveryRow, " recovery.SequenceStart = ", recovery.SequenceStart);
+
         // Note: We may get multiple OnRecoveredData() callbacks here
         CauchyCaterpillar::OnRecovery(recovery);
     }
@@ -410,8 +424,7 @@ void TestSocket::Discover(const char* ip)
 {
     asio::ip::address ipAddr;
 
-    if (!ip)
-    {
+    if (!ip) {
         ipAddr = asio::ip::address_v4::broadcast();
     }
     else
@@ -419,7 +432,9 @@ void TestSocket::Discover(const char* ip)
         // Convert IP string to IP address
         asio::error_code ec;
         ipAddr = asio::ip::make_address(ip, ec);
-        if (ec) {
+
+        if (ec)
+        {
             WOPT_DEBUG_BREAK();
             Logger.Error("make_address error: ", ec.message());
             return;
@@ -499,8 +514,7 @@ void TestSocket::OnRead(
 
         Logger.Debug("Received Discover from ", addr.address().to_string(), " : ", addr.port());
     }
-    else
-    {
+    else {
         Logger.Debug("Received Discover Reply from ", addr.address().to_string());
     }
 }
@@ -524,8 +538,7 @@ void TestSocket::OnTick()
         Connections[i]->OnTick(nowUsec);
     }
 
-    if (nowUsec - LastDiscoverUsec > kDiscoverIntervalUsec)
-    {
+    if (nowUsec - LastDiscoverUsec > kDiscoverIntervalUsec) {
         LastDiscoverUsec = nowUsec;
         Discover();
     }

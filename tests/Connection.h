@@ -82,7 +82,8 @@ struct Statistics
     std::string Name;
     float Min = 0.f;
     float Max = 0.f;
-    float Variance = 0.f;
+    float Average = 0.f;
+    float StandardDeviation = 0.f;
     float Percentiles[1 + 9 + 1]; // Min, 10% - 90%, Max
     bool WLANOptimizerEnabled = false;
 };
@@ -125,9 +126,13 @@ protected:
     std::vector<unsigned> OWDSamples;
     unsigned MinOWD = 0, MaxOWD = 0;
 
+    // Sum of all samples for average
+    uint64_t AvgSum = 0;
+
     // Variance using Welford method:
     // http://jonisalonen.com/2013/deriving-welfords-method-for-computing-variance/
     float WelfordS = 0.f, WelfordM = 0.f;
+
 
     unsigned GetPercentileOWD(float percentile);
 };

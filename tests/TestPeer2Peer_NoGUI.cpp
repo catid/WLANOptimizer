@@ -10,7 +10,8 @@ class NoGUIStatsReceiver : public wopt::IStatisticsReceiver
 public:
     void OnStats(const wopt::Statistics& stats) override
     {
-        Logger.Info("One-Way Delay Stats (msec): Min=", stats.Min, " Max=", stats.Max, " Variance=", stats.Variance);
+        Logger.Info("One-Way Delay Stats (msec): Min=", stats.Min, " Max=",
+            stats.Max, " Avg=", stats.Average, " StdDev=", stats.StandardDeviation);
 
         Logger.Info("One-Way Delay Percentiles: 10%=", stats.Percentiles[1],
             " 20%=", stats.Percentiles[2],
