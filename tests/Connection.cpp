@@ -74,16 +74,17 @@ void Switcher::Join()
 
 void Switcher::Enable(bool enabled)
 {
-    if (WoptEnabled == enabled) {
+    if (LastEnable == enabled) {
         return;
     }
+    LastEnable = enabled;
+
+    const uint64_t t0 = GetTimeUsec();
 
     Join();
 
     const uint64_t nowUsec = GetTimeUsec();
     LastSwitchUsec = nowUsec;
-
-    Logger.Info("Switching WLANOptimizer enabled = ", enabled, "...");
 
     AsyncWorker = MakeUniqueNoThrow<std::thread>([enabled] {
         const int optimizeResult = OptimizeWLAN(enabled ? 1 : 0);
@@ -100,6 +101,10 @@ void Switcher::Enable(bool enabled)
 
         WoptEnabled = enabled;
     });
+
+    const uint64_t t1 = GetTimeUsec();
+
+    Logger.Info("Switching WLANOptimizer enabled = ", enabled, " (", (t1 - t0), " usec)");
 }
 
 

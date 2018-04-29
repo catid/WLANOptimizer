@@ -173,6 +173,7 @@ protected:
     std::mutex Lock;
 
     uint64_t LastSwitchUsec = 0;
+    bool LastEnable = false;
 
     std::unique_ptr<std::thread> AsyncWorker;
 };
