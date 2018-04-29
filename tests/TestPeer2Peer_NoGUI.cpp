@@ -18,6 +18,8 @@ public:
             " 50%=", stats.Percentiles[5],
             " 80%=", stats.Percentiles[8],
             " 90%=", stats.Percentiles[9]);
+
+        Logger.Info("Wire PLR=", stats.WirePLR, "%, Effective PLR=", stats.EffectivePLR, "%");
     }
 };
 

@@ -31,7 +31,7 @@
 
 #include <algorithm>
 
-#define CONNECTION_ENABLE_FAKE_PACKET_LOSS
+#define CONNECTION_ENABLE_FAKE_PACKET_LOSS 3 /* % */
 
 namespace wopt {
 
@@ -122,8 +122,60 @@ unsigned StatisticsCalculator::GetPercentileOWD(float percentile)
     return OWDSamples[goalOffset];
 }
 
-void StatisticsCalculator::AddOWDSample(unsigned owdUsec)
+void StatisticsCalculator::OnOriginalData(Counter64 sequence)
 {
+    if (DataReceiveCount == 0)
+    {
+        DataReceiveCount = 1;
+        FirstDataSequence = sequence;
+        LargestDataSequence = sequence;
+        return;
+    }
+
+    if (sequence < FirstDataSequence) {
+        return;
+    }
+    if (sequence > LargestDataSequence) {
+        LargestDataSequence = sequence;
+    }
+    ++DataReceiveCount;
+}
+
+void StatisticsCalculator::OnDatagram(const DatagramInfo& datagram)
+{
+    // Update statistics
+    const bool reordered = FastLoss.UpdateIsReordered(datagram);
+    const bool updated = BWEstimator.UpdateOnDatagram(reordered, datagram);
+
+    if (reordered) {
+        Logger.Debug("Detected reordered packet");
+    }
+
+    if (updated)
+    {
+        //unsigned attemptedBPS = BWEstimator.GetAttemptedBPS();
+        //bool doubleLoss = FastLoss.DoubleLoss;
+        //float fastMaxPLR = FastLoss.HighestLossRate;
+        //float maxPLR = BWEstimator.GetMaxPLR();
+        //unsigned goodputBPS = BWEstimator.LatestGoodputBPS;
+        unsigned smoothedGoodputBPS = BWEstimator.SmoothedGoodputBPS;
+        float plr = BWEstimator.SmoothedPLR;
+        Logger.Debug(
+            " GoodputBPS=", smoothedGoodputBPS,
+            //" AttemptedBPS=", attemptedBPS,
+            //" DblLoss=", doubleLoss,
+            //" fastMaxPLR=", fastMaxPLR,
+            //" maxPLR=", maxPLR,
+            //" goodputBPS=", goodputBPS,
+            " PLR=", plr * 100.f, "%"
+            );
+    }
+
+    // One-way delay time
+    const unsigned owdUsec = datagram.NetworkTripUsec;
+    WOPT_DEBUG_ASSERT(owdUsec > 0); // This might happen briefly if clock sync fails
+
+    // If no data is in the samples array yet:
     if (OWDSamples.empty()) {
         MinOWD = MaxOWD = owdUsec;
         AvgSum = owdUsec;
@@ -131,6 +183,11 @@ void StatisticsCalculator::AddOWDSample(unsigned owdUsec)
         // Unrolled k = 1 first loop for Welford method
         WelfordM = owdUsec / 1000.f;
         WelfordS = 0.f;
+
+        // Reset loss stats
+        FirstDataSequence = 0;
+        LargestDataSequence = 0;
+        DataReceiveCount = 0;
     }
     else
     {
@@ -171,6 +228,10 @@ void StatisticsCalculator::AddOWDSample(unsigned owdUsec)
 
         Last.WLANOptimizerEnabled = WoptEnabled;
 
+        Last.WirePLR = BWEstimator.SmoothedPLR * 100.f;
+        const unsigned expected = (LargestDataSequence - FirstDataSequence).ToUnsigned() + 1;
+        Last.EffectivePLR = ((expected - DataReceiveCount) / (float)expected) * 100.f;
+
         Receiver->OnStats(Last);
 
         OWDSamples.clear();
@@ -190,6 +251,8 @@ void TestConnection::OnConnect(
     LastReceiveUsec = nowUsec;
     PeerAddress = addr;
     PeerGuid = guid;
+
+    LossPrng.Seed(0, 0);
 
     TimeSync.OnAuthenticatedDatagramTimestamp(remote_ts, nowUsec);
 }
@@ -294,13 +357,18 @@ void TestConnection::WriteRecovery()
 void TestConnection::OnRecoveredData(const CCatOriginal& original)
 {
     if (original.Bytes >= 3) {
-        OnData(ReadU16_LE(original.Data), original.Data[2] != 0);
+        OnOriginalData(
+            original.SequenceNumber,
+            ReadU16_LE(original.Data),
+            original.Data[2] != 0);
     }
 }
 
-void TestConnection::OnData(uint16_t id, bool enabled)
+void TestConnection::OnOriginalData(uint64_t sequence, uint16_t id, bool enabled)
 {
     //Logger.Info("Got data ", id, " enabled=", enabled);
+
+    StatsCalc.OnOriginalData(sequence);
 
     // Allow the peer with the larger GUID to win so we don't fight for control
     // of the WLANOptimizer enable switch.  We want both sides to turn it on/off
@@ -315,8 +383,14 @@ void TestConnection::OnRead(uint64_t receiveUsec, uint8_t* data, unsigned bytes)
 {
     //Logger.Info("Read: ", bytes);
 
-    if (bytes < kOverheadBytes)
-    {
+#ifdef CONNECTION_ENABLE_FAKE_PACKET_LOSS
+    // Simulate packetloss
+    if (LossPrng.Next() < (0xffffffff / 100) * CONNECTION_ENABLE_FAKE_PACKET_LOSS) {
+        return;
+    }
+#endif
+
+    if (bytes < kOverheadBytes) {
         //Logger.Warning("Ignoring discovery/bogon");
         return;
     }
@@ -357,9 +431,13 @@ void TestConnection::OnRead(uint64_t receiveUsec, uint8_t* data, unsigned bytes)
     const unsigned owdUsec = TimeSync.OnAuthenticatedDatagramTimestamp(
         datagramTimestamp,
         receiveUsec);
-    if (owdUsec > 0) {
-        StatsCalc.AddOWDSample(owdUsec);
-    }
+    DatagramInfo datagram;
+    datagram.Bytes = bytes;
+    datagram.NetworkTripUsec = owdUsec;
+    datagram.Nonce = nonce.ToUnsigned();
+    datagram.ReceiveUsec = receiveUsec;
+    datagram.SendTS24 = datagramTimestamp;
+    StatsCalc.OnDatagram(datagram);
 
     // Reconstruct data sequence number for packet.
     // The sequence number is different from the nonce, because some packets
@@ -383,14 +461,10 @@ void TestConnection::OnRead(uint64_t receiveUsec, uint8_t* data, unsigned bytes)
         original.Bytes = bytes - kOverheadBytes;
         original.SequenceNumber = recoveredSequenceStart.ToUnsigned();
 
-        OnData(ReadU16_LE(original.Data), original.Data[2] != 0);
-
-#ifdef CONNECTION_ENABLE_FAKE_PACKET_LOSS
-        // Simulate 10% packetloss
-        if (rand() % 10 == 0) {
-            return;
-        }
-#endif
+        OnOriginalData(
+            recoveredSequenceStart.ToUnsigned(),
+            ReadU16_LE(original.Data),
+            original.Data[2] != 0);
 
         // Note: We may get multiple OnRecoveredData() callbacks here
         CauchyCaterpillar::OnOriginal(original);

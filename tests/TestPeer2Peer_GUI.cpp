@@ -34,6 +34,8 @@ public:
             " 80%=", stats.Percentiles[8],
             " 90%=", stats.Percentiles[9]);
 
+        Logger.Info("Wire PLR=", stats.WirePLR, "%, Effective PLR=", stats.EffectivePLR, "%");
+
         std::lock_guard<std::mutex> locker(StatsLock);
         StatsMap[stats.Name] = stats;
     }
@@ -54,6 +56,8 @@ void DrawStats()
         ImGui::BulletText("Average OWD (msec) = %f", stats.Average);
         ImGui::BulletText("Maximum OWD (msec) = %f", stats.Max);
         ImGui::BulletText("Standard deviation (msec) = %f", stats.StandardDeviation);
+        ImGui::BulletText("Wire PLR = %f%% (simulated 3%% loss rate)", stats.WirePLR);
+        ImGui::BulletText("Effective PLR = %f%% (with CCat FEC)", stats.EffectivePLR);
         ImGui::PlotHistogram(
             "10%-90% percentile latencies",
             stats.Percentiles,

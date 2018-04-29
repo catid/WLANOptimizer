@@ -33,6 +33,7 @@
 #include "tools/TimeSync.h"
 #include "tools/StrikeRegister.h"
 #include "tools/CCatCpp.h"
+#include "Statistics.h"
 #include "Tools.h"
 
 namespace wopt {
@@ -48,7 +49,7 @@ static const uint64_t kSwitchIntervalUsec = 1000 * 1000 * 20; // 20 sec
 static const uint64_t kDiscoverIntervalUsec = 1000 * 1000; // 1 sec
 
 // Timeout
-static const uint64_t kTimeoutUsec = 5 * 1000 * 1000; // 5 sec
+static const uint64_t kTimeoutUsec = 10 * 1000 * 1000; // 10 sec
 
 // Server port
 static const uint16_t kServerPort = 6969;
@@ -84,6 +85,8 @@ struct Statistics
     float Max = 0.f;
     float Average = 0.f;
     float StandardDeviation = 0.f;
+    float WirePLR = 0.f;
+    float EffectivePLR = 0.f;
     float Percentiles[1 + 9 + 1]; // Min, 10% - 90%, Max
     bool WLANOptimizerEnabled = false;
 };
@@ -114,7 +117,8 @@ public:
         Name = name;
     }
 
-    void AddOWDSample(unsigned owdUsec);
+    void OnDatagram(const DatagramInfo& datagram);
+    void OnOriginalData(Counter64 sequence);
 
 protected:
     IStatisticsReceiver* Receiver;
@@ -122,6 +126,9 @@ protected:
     std::mutex Lock;
     Statistics Last;
     std::string Name;
+
+    FastLossIndicator FastLoss;
+    BandwidthEstimator BWEstimator;
 
     std::vector<unsigned> OWDSamples;
     unsigned MinOWD = 0, MaxOWD = 0;
@@ -132,6 +139,10 @@ protected:
     // Variance using Welford method:
     // http://jonisalonen.com/2013/deriving-welfords-method-for-computing-variance/
     float WelfordS = 0.f, WelfordM = 0.f;
+
+    Counter64 FirstDataSequence = 0;
+    Counter64 LargestDataSequence = 0;
+    unsigned DataReceiveCount = 0;
 
 
     unsigned GetPercentileOWD(float percentile);
@@ -164,6 +175,35 @@ protected:
     uint64_t LastSwitchUsec = 0;
 
     std::unique_ptr<std::thread> AsyncWorker;
+};
+
+
+//------------------------------------------------------------------------------
+// PCG PRNG
+
+/// From http://www.pcg-random.org/
+class PCGRandom
+{
+public:
+    void Seed(uint64_t y, uint64_t x = 0)
+    {
+        State = 0;
+        Inc = (y << 1u) | 1u;
+        Next();
+        State += x;
+        Next();
+    }
+
+    uint32_t Next()
+    {
+        const uint64_t oldstate = State;
+        State = oldstate * UINT64_C(6364136223846793005) + Inc;
+        const uint32_t xorshifted = (uint32_t)(((oldstate >> 18) ^ oldstate) >> 27);
+        const uint32_t rot = oldstate >> 59;
+        return (xorshifted >> rot) | (xorshifted << ((uint32_t)(-(int32_t)rot) & 31));
+    }
+
+    uint64_t State = 0, Inc = 0;
 };
 
 
@@ -219,13 +259,15 @@ protected:
 
     StatisticsCalculator StatsCalc;
 
+    PCGRandom LossPrng;
+
 
     void WriteNextData();
     void WriteRecovery();
 
     void OnRecoveredData(const CCatOriginal& original) override;
 
-    void OnData(uint16_t id, bool enabled);
+    void OnOriginalData(uint64_t sequence, uint16_t id, bool enabled);
 };
 
 

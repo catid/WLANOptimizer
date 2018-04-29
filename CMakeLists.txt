@@ -68,6 +68,8 @@ set(COMMON_SOURCE_FILES
         tests/tools/gf256.h
         tests/tools/StrikeRegister.cpp
         tests/tools/StrikeRegister.h
+        tests/Statistics.cpp
+        tests/Statistics.h
         tests/Tools.cpp
         tests/Tools.h
         tests/Connection.cpp
