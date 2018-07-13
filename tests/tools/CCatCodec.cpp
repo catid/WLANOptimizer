@@ -1080,7 +1080,8 @@ CCatResult Decoder::FindSolutionsContaining(const Counter64 sequence)
     }
 
     PKTALLOC_DEBUG_ASSERT(RecoveryFirst != nullptr);
-    PKTALLOC_DEBUG_ASSERT(RecoveryFirst->SequenceStart <= sequence);
+    //PKTALLOC_DEBUG_ASSERT(RecoveryFirst->SequenceStart <= sequence);
+	// This happens sometimes if an original is received that is not protected
 
     // Receiving originals out of order is rare, so apply some heuristics:
     // If there is a recovery packet that now references just one loss,
