@@ -851,6 +851,8 @@ extern "C" void gf256_add2_mem(void * GF256_RESTRICT vz, const void * GF256_REST
         z16 = reinterpret_cast<GF256_M128 *>(z8 + count);
         x16 = reinterpret_cast<const GF256_M128 *>(x8 + count);
         y16 = reinterpret_cast<const GF256_M128 *>(y8 + count);
+
+        bytes -= (count * 8);
     }
 #else // GF256_TARGET_MOBILE
 # if defined(GF256_TRY_AVX2)
